@@ -51,7 +51,6 @@ def get_failed_services(logger, log_file_path):
     except Exception as e:
         logger.error(f"Error reading the log file: {e}")
     
-    print(failed_services)
     return failed_services
 
 def get_public_ip(logger, log_file):

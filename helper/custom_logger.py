@@ -108,4 +108,3 @@ def delete_old_gz_logs(log_dir, age_threshold=10, keep_count=4):
         for mtime, file_path in gz_files[:-keep_count]:  # Skip the `keep_count` newest .gz files
             if mtime < age_limit:
                 os.remove(file_path)
-                print(f"Deleted old log: {file_path}")
