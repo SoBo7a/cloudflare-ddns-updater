@@ -2,6 +2,7 @@ import random
 import socket
 import requests
 from datetime import datetime, timedelta
+import subprocess
 
 # List of services to get public IP from
 IP_SERVICES = [
@@ -18,6 +19,29 @@ IP_SERVICES = [
     {"name": "whatismyip.akamai.com", "url": "https://whatismyip.akamai.com/"}
 ]
 
+def is_network_available(logger):
+    """
+    Checks if the network is available by pinging a reliable host.
+    
+    Args:
+        logger (logging.Logger): Logger instance for logging connectivity status.
+    
+    Returns:
+        bool: True if the network is available, False otherwise.
+    """
+    try:
+        # Ping Google's public DNS server to check internet connectivity
+        subprocess.check_call(
+            ["ping", "-c", "1", "8.8.8.8"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        logger.info("Network is available.")
+        return True
+    except subprocess.CalledProcessError:
+        logger.error("Network is unavailable. Skipping public IP check.")
+        return False
+    
 def get_failed_services(logger, log_file_path):
     """
     Checks the log file for services that have failed in the last 24 hours.
@@ -61,6 +85,9 @@ def get_public_ip(logger, log_file):
     Returns:
         tuple: A tuple containing the public IPv4 address and the service provider name, or None if it could not be fetched.
     """
+    if not is_network_available(logger):
+        return None, None
+    
     failed_services = get_failed_services(logger, log_file)
     available_services = [service for service in IP_SERVICES if service["name"] not in failed_services]
 

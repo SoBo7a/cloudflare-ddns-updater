@@ -1,143 +1,132 @@
-import random
-import socket
 import requests
-from datetime import datetime, timedelta
-import subprocess
+import os
+from os.path import join, dirname
+from dotenv import load_dotenv
+from helper.custom_logger import setup_logger, compress_old_logs, delete_old_gz_logs
+from helper.ip_helper import get_public_ip, is_valid_ip
 
-# List of services to get public IP from
-IP_SERVICES = [
-    {"name": "api.ipify.org", "url": "https://api.ipify.org/"},
-    {"name": "checkip.amazonaws.com", "url": "https://checkip.amazonaws.com"},
-    {"name": "dnsomatic.com", "url": "https://myip.dnsomatic.com"},
-    {"name": "icanhazip.com", "url": "https://ipv4.icanhazip.com/"},
-    {"name": "ident.me", "url": "https://ident.me/"},
-    {"name": "ifconfig.co", "url": "https://ipv4.ifconfig.co/ip"},
-    {"name": "ifconfig.me", "url": "https://ipv4.ifconfig.me/ip"},
-    {"name": "ipecho.net", "url": "https://ipv4.ipecho.net/plain"},
-    {"name": "ipinfo.io", "url": "https://ipinfo.io/json"},
-    {"name": "myexternalip.com", "url": "https://myexternalip.com/raw"},
-    {"name": "whatismyip.akamai.com", "url": "https://whatismyip.akamai.com/"}
-]
+# Load environment variables from .env file
+dotenv_path = join(dirname(__file__), '.env')
+load_dotenv(dotenv_path)
 
-def is_network_available(logger):
+# Cloudflare API credentials
+API_KEY = os.environ.get("API_KEY")
+ZONE_ID = os.environ.get("ZONE_ID")
+
+# Set up logging
+log_file = '/var/log/cloudflare/dns_update.log'
+logger = setup_logger(log_file)
+
+
+def main():
     """
-    Checks if the network is available by pinging a reliable host.
-    
-    Args:
-        logger (logging.Logger): Logger instance for logging connectivity status.
-    
+    Main function that checks if the public IP has changed and updates Cloudflare DNS records accordingly.
+    """
+    public_ip, service_name = get_public_ip(logger, log_file)
+
+    if public_ip:
+        logger.info(f"Current public IP: {public_ip} (from {service_name})")
+        
+        # Get the current DNS records
+        dns_records = get_dns_records()
+
+        if not dns_records:
+            logger.warning("No valid DNS records found.")
+            return
+
+        # Iterate over DNS records and update them if the IP has changed
+        for record in dns_records:
+            if record['content'] != public_ip:
+                logger.info(f"IP for {record['name']} has changed. Updating...")
+                update_dns_record(record['id'], public_ip, dns_records)
+            else:
+                logger.info(f"IP for {record['name']} is already up-to-date.")
+        
+    log_dir = os.path.dirname(log_file)
+    compress_old_logs(log_dir, 10080, 3) # 1 Week
+    delete_old_gz_logs(log_dir, 40320, 4) # 4 Weeks
+
+
+def get_dns_records():
+    """
+    Fetches all DNS records for the specified Cloudflare zone.
+
     Returns:
-        bool: True if the network is available, False otherwise.
+        list: A list of DNS records that have an IPv4 address.
     """
+    url = f"https://api.cloudflare.com/client/v4/zones/{ZONE_ID}/dns_records"
+    headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
+
     try:
-        # Ping Google's public DNS server to check internet connectivity
-        subprocess.check_call(
-            ["ping", "-c", "1", "8.8.8.8"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-        logger.info("Network is available.")
-        return True
-    except subprocess.CalledProcessError:
-        logger.error("Network is unavailable. Skipping public IP check.")
-        return False
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        return parse_dns_records(response.json())
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error fetching DNS records: {e}")
+        return []
 
-def get_failed_services(logger, log_file_path):
+
+def parse_dns_records(data):
     """
-    Checks the log file for services that have failed in the last 24 hours.
-    
+    Parses DNS records from the Cloudflare API response.
+
     Args:
-        logger (logging.Logger): The logger for logging messages.
-        log_file_path (str): Path to the log file to check for errors.
-    
+        data (dict): The API response data.
+
     Returns:
-        set: A set of service names that failed in the last 24 hours.
+        list: A list of DNS records that contain valid IPv4 addresses.
     """
-    failed_services = set()
+    if not data.get("success"):
+        logger.error(f"Error fetching DNS records: {data.get('errors')}")
+        return []
+
+    dns_records = []
+    for record in data["result"]:
+        if record['content'] and is_valid_ip(record['content']):
+            dns_records.append({
+                "id": record["id"],
+                "name": record["name"],
+                "content": record["content"]
+            })
+    return dns_records
+
+
+def update_dns_record(record_id, new_ip, dns_records):
+    """
+    Updates a DNS record in Cloudflare with the new IP address.
+
+    Args:
+        record_id (str): The ID of the DNS record to update.
+        new_ip (str): The new IP address to set.
+        dns_records (list): The list of DNS records containing the record to update.
+    """
+    record = next((r for r in dns_records if r["id"] == record_id), None)
+    if not record:
+        logger.error(f"Record with ID {record_id} not found.")
+        return
+
+    url = f"https://api.cloudflare.com/client/v4/zones/{ZONE_ID}/dns_records/{record_id}"
+    headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
+
+    data = {
+        "type": "A",
+        "name": record["name"],
+        "content": new_ip,
+        "ttl": 1,  # Automatic TTL
+        "proxied": True  # Cloudflare proxy (orange cloud)
+    }
+
     try:
-        # Calculate the timestamp for 24 hours ago
-        twenty_four_hours_ago = datetime.now() - timedelta(hours=24)
-        with open(log_file_path, 'r') as log_file:
-            for line in log_file:
-                # Check if the line contains error information about a service
-                if 'Error' in line or 'invalid' in line:  # Modify based on your log format for errors
-                    timestamp_str = line.split()[0]  # Assuming timestamp is the first word
-                    timestamp = datetime.strptime(timestamp_str, '%Y-%m-%d')  # Adjust format if needed
-                    if timestamp > twenty_four_hours_ago:
-                        # Extract service name from the log line
-                        for service in IP_SERVICES:
-                            if service["name"] in line:
-                                failed_services.add(service["name"])
-                                logger.warning(f"Skipping {service['name']} since it failed in the last 24 hours.")
-                                break
-    except FileNotFoundError:
-        logger.error(f"Log file not found: {log_file_path}")
-    except Exception as e:
-        logger.error(f"Error reading the log file: {e}")
-    
-    return failed_services
+        response = requests.put(url, json=data, headers=headers)
+        response.raise_for_status()
+        result = response.json()
+        if result.get("success"):
+            logger.info(f"Successfully updated DNS record {record_id} to IP {new_ip}")
+        else:
+            logger.error(f"Error updating DNS record {record_id}: {result.get('errors')}")
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error updating DNS record {record_id}: {e}")
 
-def get_public_ip(logger, log_file):
-    """
-    Attempts to fetch the public IPv4 address by trying multiple services.
-    Randomly selects the service to avoid overusing one, and skips services that have failed in the last 24 hours.
 
-    Returns:
-        tuple: A tuple containing the public IPv4 address and the service provider name, or None if it could not be fetched.
-    """
-    if not is_network_available(logger):
-        return None, None
-
-    failed_services = get_failed_services(logger, log_file)
-    available_services = [service for service in IP_SERVICES if service["name"] not in failed_services]
-
-    if not available_services:
-        logger.error("No available services to fetch public IP after checking logs.")
-        return None, None
-
-    random.shuffle(available_services)
-
-    for service in available_services:
-        try:
-            ip = fetch_ip_from_service(service)
-            if ip and is_valid_ip(ip):
-                return ip, service["name"]
-            logger.warning(f"Received an invalid or IPv6 address from {service['name']}: {ip}, trying the next service.")
-        except Exception as e:
-            logger.error(f"Error fetching public IP from {service['name']}: {e}")
-
-    logger.error("All attempts to fetch a valid public IPv4 address failed.")
-    return None, None
-
-def fetch_ip_from_service(service):
-    """
-    Fetches the public IP address from a given service.
-
-    Args:
-        service (dict): The service information containing name and URL.
-
-    Returns:
-        str: The IP address as a string.
-    """
-    response = requests.get(service["url"])
-    response.raise_for_status()  # Ensure we get a valid response
-
-    if service["name"] == "ipinfo.io":
-        return response.json().get("ip")
-    return response.text.strip()
-
-def is_valid_ip(ip):
-    """
-    Checks if the given IP address is a valid IPv4 address.
-
-    Args:
-        ip (str): The IP address to validate.
-
-    Returns:
-        bool: True if the IP is valid IPv4, False otherwise.
-    """
-    try:
-        socket.inet_pton(socket.AF_INET, ip)
-        return True
-    except socket.error:
-        return False
+if __name__ == "__main__":
+    main()
