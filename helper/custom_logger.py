@@ -19,10 +19,13 @@ def setup_logger(log_file):
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
         
-    logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
+    log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
+    level = getattr(logging, log_level, "INFO")
+        
+    logger = logging.getLogger(__name__)
+    logger.setLevel(level)
 
-    # Create a TimedRotatingFileHandler to rotate every minute
+    # TimedRotatingFileHandler to rotate every monday
     handler = TimedRotatingFileHandler(log_file, when="W0", interval=1, backupCount=0)
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
     handler.setFormatter(formatter)

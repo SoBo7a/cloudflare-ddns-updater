@@ -82,4 +82,4 @@ Logs are stored at /var/log/cloudflare/dns_update.log by default. You can change
 - Log Settings: Update log directory or retention policies in helper/custom_logger.py.
 
 ## License
-This project is licensed under the MIT License.
+This project is licensed under the [MIT License](LICENSE.txt).

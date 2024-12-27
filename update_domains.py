@@ -86,7 +86,10 @@ def parse_dns_records(data):
             dns_records.append({
                 "id": record["id"],
                 "name": record["name"],
-                "content": record["content"]
+                "content": record["content"],
+                "proxied": record["proxied"],
+                "type": record["type"],
+                "ttl": record["ttl"]
             })
     return dns_records
 
@@ -109,11 +112,11 @@ def update_dns_record(record_id, new_ip, dns_records):
     headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
 
     data = {
-        "type": "A",
         "name": record["name"],
         "content": new_ip,
-        "ttl": 1,  # Automatic TTL
-        "proxied": True  # Cloudflare proxy (orange cloud)
+        "proxied": record["proxied"],
+        "type": record["type"],
+        "ttl": record["ttl"]
     }
 
     try:
@@ -121,11 +124,11 @@ def update_dns_record(record_id, new_ip, dns_records):
         response.raise_for_status()
         result = response.json()
         if result.get("success"):
-            logger.info(f"Successfully updated DNS record {record_id} to IP {new_ip}")
+            logger.info(f"Successfully updated DNS record {record['name']} to IP {new_ip}")
         else:
-            logger.error(f"Error updating DNS record {record_id}: {result.get('errors')}")
+            logger.error(f"Error updating DNS record {record['name']}: {result.get('errors')}")
     except requests.exceptions.RequestException as e:
-        logger.error(f"Error updating DNS record {record_id}: {e}")
+        logger.error(f"Error updating DNS record {record['name']}: {e}")
 
 
 if __name__ == "__main__":
