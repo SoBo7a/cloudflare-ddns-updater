@@ -10,6 +10,7 @@ This tool keeps your Cloudflare DNS "A" records updated with your current public
 - **Fallback System:** Uses multiple services to fetch your IP in case of failures.
 - **Efficient Logging:** Logs events and errors, compresses old logs, and removes outdated ones.
 - **Error Resilience:** Skips recently failed services to ensure reliability.
+- **Integration:** Works with [wan-ip-provider](https://github.com/SoBo7a/wan-ip-provider).
 
 ## Requirements
 
@@ -45,6 +46,11 @@ Create a .env file in the project root:
 ```
 API_KEY=<your-cloudflare-api-key>
 ZONE_ID=<your-cloudflare-zone-id>
+
+IP_PROVIDER="INTERNAL" # Choose between "INTERNAL" for the included provider or "WAN-IP-PROVIDER" to use https://github.com/SoBo7a/wan-ip-provider
+WAN_IP_PROVIDER_HOST="http://<host>:<port>" # Set your WAN-IP-PROVIDERs Hostname/IP and Port if WAN-IP-PROVIDER is in use. 
+
+LOG_LEVEL=INFO
 ```
 
 ## Usage

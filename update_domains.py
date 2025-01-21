@@ -4,6 +4,7 @@ from os.path import join, dirname
 from dotenv import load_dotenv
 from helper.custom_logger import setup_logger, compress_old_logs, delete_old_gz_logs
 from helper.ip_helper import get_public_ip, is_valid_ip
+from helper.wan_ip_helper import get_ipv4
 
 # Load environment variables from .env file
 dotenv_path = join(dirname(__file__), '.env')
@@ -12,6 +13,10 @@ load_dotenv(dotenv_path)
 # Cloudflare API credentials
 API_KEY = os.environ.get("API_KEY")
 ZONE_ID = os.environ.get("ZONE_ID")
+
+# IP Provider settings
+IP_PROVIDER = os.environ.get("IP_PROVIDER")
+WAN_IP_PROVIDER_HOST = os.environ.get("WAN_IP_PROVIDER_HOST")
 
 # Set up logging
 log_file = '/var/log/cloudflare/dns_update.log'
@@ -22,7 +27,12 @@ def main():
     """
     Main function that checks if the public IP has changed and updates Cloudflare DNS records accordingly.
     """
-    public_ip, service_name = get_public_ip(logger, log_file)
+    if IP_PROVIDER == "INTERNAL":
+        public_ip, service_name = get_public_ip(logger, log_file)
+    elif IP_PROVIDER == "WAN-IP-PROVIDER":
+        public_ip, service_name = get_ipv4(WAN_IP_PROVIDER_HOST, logger)
+    else:
+        logger.warning(f"Invalid environment variable set: {IP_PROVIDER}")
 
     if public_ip:
         logger.info(f"Current public IP: {public_ip} (from {service_name})")
